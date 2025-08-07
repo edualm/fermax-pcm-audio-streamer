@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"pcm-audio-streamer/pkg/audio"
 	"pcm-audio-streamer/pkg/config"
@@ -68,7 +69,8 @@ func (s *Server) handlePlayFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	if err := s.forwardAudioToPython(processedData, contentType); err != nil {
+	// Send audio in chunks like ONVIF RTP packets (160 bytes each for G.711 at 8kHz)
+	if err := s.forwardAudioInChunks(processedData, contentType); err != nil {
 		log.Printf("Error forwarding audio to Python: %v", err)
 		http.Error(w, "Failed to forward audio", http.StatusInternalServerError)
 		return
@@ -109,7 +111,34 @@ func (s *Server) processAudioForONVIF(wavInfo *audio.WAVInfo) ([]byte, string, e
 	
 	log.Printf("Audio processed: %d PCM bytes -> %d G.711 bytes", len(pcmData), len(g711Data))
 	
-	return g711Data, "audio/g711", nil
+	// Use "audio/pcm" content-type to match the RTSP proxy behavior
+	// Even though we're sending G.711 data, the fermax-onvif expects this header
+	return g711Data, "audio/pcm", nil
+}
+
+func (s *Server) forwardAudioInChunks(audioData []byte, contentType string) error {
+	const chunkSize = 160 // 20ms of G.711 at 8kHz (matches ONVIF RTP packets)
+	totalChunks := (len(audioData) + chunkSize - 1) / chunkSize
+	
+	log.Printf("Sending audio in %d chunks of %d bytes each", totalChunks, chunkSize)
+	
+	for i := 0; i < len(audioData); i += chunkSize {
+		end := i + chunkSize
+		if end > len(audioData) {
+			end = len(audioData)
+		}
+		
+		chunk := audioData[i:end]
+		if err := s.forwardAudioToPython(chunk, contentType); err != nil {
+			return fmt.Errorf("failed to send chunk %d/%d: %w", (i/chunkSize)+1, totalChunks, err)
+		}
+		
+		// Small delay between chunks to simulate real-time streaming (20ms per chunk)
+		time.Sleep(20 * time.Millisecond)
+	}
+	
+	log.Printf("Successfully sent all %d audio chunks", totalChunks)
+	return nil
 }
 
 func (s *Server) forwardAudioToPython(audioData []byte, contentType string) error {
