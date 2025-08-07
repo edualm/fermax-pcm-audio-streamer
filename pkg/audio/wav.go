@@ -38,7 +38,14 @@ func ValidateFilename(filename string) error {
 	return nil
 }
 
-func ReadWAVFile(audioDir, filename string) ([]byte, error) {
+type WAVInfo struct {
+	PCMData    []byte
+	SampleRate uint32
+	Channels   uint16
+	BitsPerSample uint16
+}
+
+func ReadWAVFile(audioDir, filename string) (*WAVInfo, error) {
 	if err := ValidateFilename(filename); err != nil {
 		return nil, err
 	}
@@ -126,5 +133,10 @@ func ReadWAVFile(audioDir, filename string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read PCM data: %w", err)
 	}
 	
-	return pcmData, nil
+	return &WAVInfo{
+		PCMData:       pcmData,
+		SampleRate:    fmtHeader.SampleRate,
+		Channels:      fmtHeader.NumChannels,
+		BitsPerSample: fmtHeader.BitsPerSample,
+	}, nil
 }
